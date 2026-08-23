@@ -44,34 +44,45 @@ cd goprodownloader
 
 Keep this Terminal window open — every later command runs here.
 
-## 4. Capture the HAR
+## 4. Get your access token
 
-Do this immediately before step 5. The token inside expires in hours.
+Recent Chrome versions only offer **"Export HAR (sanitized)"**, which strips the
+`Authorization` header on purpose — a sanitized HAR can never work. Copying the
+token straight out of the cookie jar is more reliable and quicker anyway.
+
+Do this immediately before step 5; the token expires in hours.
 
 1. In Chrome, sign in at **gopro.com** and open your **Media Library**
 2. `Cmd + Option + I` opens DevTools (**not** F12 — that is a brightness key)
-3. Click the **Network** tab
-4. Tick **Preserve log**
-5. `Cmd + R` to reload; wait for thumbnails to appear
-6. Click the **⬇ down-arrow (Export HAR)** in the Network toolbar
+3. Click the **Application** tab (it may be hidden behind the **»** chevron)
+4. Left sidebar → **Storage** → **Cookies** → **https://gopro.com**
+5. Click the row named **`gp_access_token`**
+6. The full value appears in the panel at the bottom — select it all and copy.
+   (Or double-click the **Value** cell, then `Cmd + A`, `Cmd + C`.)
 
-   The up-arrow next to it is *import*, not export — you want the one
-   pointing **down**. On a narrow DevTools panel the toolbar wraps onto two
-   rows and the arrows end up on the second row, under `Preserve log`.
-   Widening the panel, or undocking it via **⋮ → Dock side → separate
-   window**, puts everything back on one row.
+It starts `eyJhbGciOiJSU0EtT0FFUCI...`, runs to roughly 1,270 characters and
+contains four dots. Copy **all** of it.
 
-   Easier alternative: **right-click anywhere in the request list** and choose
-   **"Save all as HAR with content"**.
+Then, in Terminal in the `goprodownloader` folder:
 
-   > If offered a choice, pick **"Export HAR (with sensitive data)"**. The
-   > *sanitized* option strips the `Authorization` header on purpose, and the
-   > tool cannot work without it.
+```bash
+read -rs GOPRO_TOKEN && export GOPRO_TOKEN
+```
 
-7. Save as `gopro.com.har` and move it into the `goprodownloader` folder
+Press Enter, paste the token, press Enter again. Nothing appears on screen —
+that is deliberate, and keeps the token out of your shell history.
 
-**This file is a password.** It holds your access token and cookies. Do not
-sync, email or commit it. Delete it when you are done (step 9).
+**This token is a password.** It only lives in that Terminal window, so closing
+the window discards it. Every command below assumes that window.
+
+### If you would rather use a HAR file
+
+Still supported, and it means you never handle the token yourself — but only if
+your Chrome can produce an unsanitized export. Right-click the request list and
+look for **"Save all as HAR with content"** or **"Export HAR (with sensitive
+data)"**. Save it as `gopro.com.har` in the `goprodownloader` folder and add
+`--har gopro.com.har` to the commands below. If the only option you get is
+*sanitized*, use the cookie method above instead.
 
 ## 5. Look before you leap
 
@@ -115,8 +126,8 @@ cd ~/Desktop/goprodownloader
 wc -l < GoProLibrary/_download_ledger.jsonl
 ```
 
-If the token expires mid-run, you get a clear message: capture a fresh HAR
-(step 4) and re-run. Nothing already downloaded is lost.
+If the token expires mid-run — likely on a long run — you get a clear message.
+Re-do step 4 to get a fresh token and re-run. Nothing already downloaded is lost.
 
 ## 9. Finish
 
@@ -130,10 +141,11 @@ wc -l < GoProLibrary/_download_ledger.jsonl
 The second number should be **at least** the first. Higher is normal —
 chaptered videos become several files.
 
-Then delete the credential:
+Then close that Terminal window, which discards the token. If you used a HAR
+file, delete it — it holds the same credential:
 
 ```bash
-rm gopro.com.har
+rm -f gopro.com.har
 ```
 
 ---
@@ -142,8 +154,9 @@ rm gopro.com.har
 
 | Message | Cause | Fix |
 |---|---|---|
-| `No access token found in that HAR file` | Sanitized HAR export | Re-export with *"with sensitive data"* |
-| `The API rejected the token` | Token expired | Capture a fresh HAR, re-run |
-| `Library enumeration failed` | GoPro changed their API | Scroll to the bottom of the library before exporting, then `--from-har-ids` |
+| `No access token found in that HAR file` | Sanitized HAR export | Use the cookie method in step 4 |
+| `The API rejected the token` | Token expired, or copied only part of it | Re-do step 4; check it has four dots |
+| `Could not find HAR file` | No token set in this window | Re-run the `read -rs` command in step 4 |
+| `Library enumeration failed` | GoPro changed their API | Scroll to the bottom of the library, export a HAR, then `--from-har-ids` |
 | 403s partway through | Going too fast | `--workers 1` |
-| Anything else | — | Run `python3 tools/probe_api.py --har gopro.com.har` and share the output; it prints structure only, no private data |
+| Anything else | — | Run `python3 tools/probe_api.py` and share the output; it prints structure only, no private data |

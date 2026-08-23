@@ -40,6 +40,10 @@ redacts it from all of its own output.
 
 ---
 
+> **Chrome now defaults to a sanitized HAR export**, which strips the
+> `Authorization` header on purpose. If that is all your Chrome offers, skip
+> the HAR and use the token method below — it is quicker anyway.
+
 ## Step 1 — capture your session
 
 1. Log in to <https://gopro.com/media-library> in Chrome or Edge.
@@ -67,9 +71,11 @@ run this, not the day before.
 
 ### Alternative without a HAR file
 
-If you would rather not create a HAR at all: in the Network tab, click any
-request to `api.gopro.com`, find the `Authorization: Bearer …` request header,
-and pass just the token:
+If you would rather not create a HAR at all — or your Chrome only offers the
+sanitized export — take the token straight from the cookie jar. In DevTools:
+**Application** tab → **Storage** → **Cookies** → `https://gopro.com` → the row
+named **`gp_access_token`**. Click it and copy the whole value (it starts
+`eyJhbGci…` and contains four dots). Then:
 
 ```bash
 python gopro_downloader.py --token "eyJhbGciOi..." --out ./GoProLibrary
