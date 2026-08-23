@@ -187,6 +187,23 @@ cd tests && python test_downloader.py
 
 ---
 
+## Checking it against the live API without downloading anything
+
+If you want to confirm GoPro hasn't changed their API before committing to a
+long run:
+
+```bash
+python tools/probe_api.py --har gopro.com.har
+```
+
+It calls the two endpoints the downloader depends on, fetches the first 1 KB of
+one real file, and prints the **structure** of each response — key names, types
+and list lengths, with every value replaced by its type. No filenames, IDs,
+dates or tokens appear in the output, so it is safe to paste into a chat if you
+want someone to look at it. It downloads nothing.
+
+---
+
 ## Troubleshooting
 
 **"No access token found in that HAR file"** — you were not logged in when you
