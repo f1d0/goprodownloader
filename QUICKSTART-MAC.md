@@ -53,7 +53,16 @@ Do this immediately before step 5. The token inside expires in hours.
 3. Click the **Network** tab
 4. Tick **Preserve log**
 5. `Cmd + R` to reload; wait for thumbnails to appear
-6. Click **⬇ Export HAR** in the Network toolbar
+6. Click the **⬇ down-arrow (Export HAR)** in the Network toolbar
+
+   The up-arrow next to it is *import*, not export — you want the one
+   pointing **down**. On a narrow DevTools panel the toolbar wraps onto two
+   rows and the arrows end up on the second row, under `Preserve log`.
+   Widening the panel, or undocking it via **⋮ → Dock side → separate
+   window**, puts everything back on one row.
+
+   Easier alternative: **right-click anywhere in the request list** and choose
+   **"Save all as HAR with content"**.
 
    > If offered a choice, pick **"Export HAR (with sensitive data)"**. The
    > *sanitized* option strips the `Authorization` header on purpose, and the
