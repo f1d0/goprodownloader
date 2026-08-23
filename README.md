@@ -3,8 +3,8 @@
 Pulls your entire GoPro Cloud media library down to your own disk, when the
 GoPro website will not.
 
-Standard library only — **no `pip install` needed**. Python 3.9 or newer, and
-nothing else.
+Standard library only — **no `pip install` needed**. Python 3.8 or newer, and
+nothing else. (macOS Monterey and later already ship a suitable `python3`.)
 
 ---
 
@@ -41,12 +41,23 @@ redacts it from all of its own output.
 ## Step 1 — capture your session
 
 1. Log in to <https://gopro.com/media-library> in Chrome or Edge.
-2. Press `F12` to open DevTools, and click the **Network** tab.
+2. Open DevTools and click the **Network** tab.
+   * macOS: **Cmd + Option + I** (`F12` is a screen-brightness key on a Mac
+     keyboard and will not work)
+   * Windows/Linux: **F12**
 3. Tick **Preserve log**.
 4. Reload the page and wait for your media thumbnails to appear.
    You do **not** need to scroll to the bottom — this tool asks the API for the
    full list itself. Scrolling is only needed for the `--from-har-ids` fallback.
-5. Click the **Export HAR** (download arrow) button in the Network tab.
+5. Click the **Export HAR** (download arrow) button in the Network toolbar.
+
+   > **Important:** recent Chrome versions offer two choices here. Pick
+   > **"Export HAR (with sensitive data)"**. The option labelled
+   > **"sanitized"** deliberately strips `Authorization` headers and cookies —
+   > which is exactly the token this tool needs, so a sanitized export will
+   > fail with *"No access token found"*. If your Chrome only offers the
+   > sanitized export, use the `--token` method below instead.
+
 6. Save it as `gopro.com.har` next to `gopro_downloader.py`.
 
 Tokens are short-lived — typically hours. Capture the HAR shortly before you
@@ -206,9 +217,11 @@ want someone to look at it. It downloads nothing.
 
 ## Troubleshooting
 
-**"No access token found in that HAR file"** — you were not logged in when you
-recorded, or DevTools exported a filtered view. Clear the Network filter box,
-tick Preserve log, reload, then export.
+**"No access token found in that HAR file"** — most likely you used Chrome's
+**sanitized** HAR export, which strips the `Authorization` header on purpose.
+Re-export with *"Export HAR (with sensitive data)"*, or use `--token`. Failing
+that: you were not logged in when you recorded, or DevTools exported a filtered
+view — clear the Network filter box, tick Preserve log, reload, then export.
 
 **"The API rejected the token" / 401** — the token expired. Capture a fresh
 HAR. The tool prints the remaining validity when it starts, so you can see this
