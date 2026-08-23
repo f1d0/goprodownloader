@@ -56,21 +56,43 @@ Do this immediately before step 5; the token expires in hours.
 2. `Cmd + Option + I` opens DevTools (**not** F12 — that is a brightness key)
 3. Click the **Application** tab (it may be hidden behind the **»** chevron)
 4. Left sidebar → **Storage** → **Cookies** → **https://gopro.com**
-5. Click the row named **`gp_access_token`**
-6. The full value appears in the panel at the bottom — select it all and copy.
-   (Or double-click the **Value** cell, then `Cmd + A`, `Cmd + C`.)
+5. Click the **Console** tab. If Chrome asks, type `allow pasting` and press
+   Enter (it blocks console pasting until you do). Then paste this and press
+   Enter:
 
-It starts `eyJhbGciOiJSU0EtT0FFUCI...`, runs to roughly 1,270 characters and
-contains four dots. Copy **all** of it.
+   ```js
+   copy(document.cookie.match(/gp_access_token=([^;]+)/)[1])
+   ```
 
-Then, in Terminal in the `goprodownloader` folder:
+   That puts the **complete** token on your clipboard. Nothing is displayed —
+   `copy()` is a DevTools helper that copies silently. That is normal.
+
+   *If it errors,* use **Application → Storage → Cookies →
+   `https://gopro.com`**, click the `gp_access_token` row, then select the
+   value in the detail panel at the **bottom** (not the clipped Value column)
+   and press `Cmd + C`.
+
+Then, in Terminal in the `goprodownloader` folder, load it **from the
+clipboard** — do not type or paste it into the terminal:
 
 ```bash
-read -rs GOPRO_TOKEN && export GOPRO_TOKEN
+export GOPRO_TOKEN="$(pbpaste)"
 ```
 
-Press Enter, paste the token, press Enter again. Nothing appears on screen —
-that is deliberate, and keeps the token out of your shell history.
+Check it arrived whole:
+
+```bash
+echo "length: ${#GOPRO_TOKEN}  dots: $(printf '%s' "$GOPRO_TOKEN" | tr -cd '.' | wc -c)"
+```
+
+You want roughly **1,200-1,300 characters and 4 dots**.
+
+> **Never use `read`, and never paste the token at a prompt.** macOS caps a
+> single line of typed or pasted input at **1024 bytes**, and the token is
+> longer. The terminal beeps and silently discards the remainder, leaving a
+> token of about 1015 characters that the API rejects with a misleading
+> `invalid_request` — which looks exactly like an expired token. `pbpaste`
+> reads the clipboard directly and is not subject to that limit.
 
 **This token is a password.** It only lives in that Terminal window, so closing
 the window discards it. Every command below assumes that window.
