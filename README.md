@@ -110,6 +110,34 @@ Interrupt it whenever you like. Re-running the identical command resumes:
 finished files are skipped, and a file cut off mid-transfer continues from the
 byte it stopped at rather than starting over.
 
+### For a long run on a Mac
+
+A large library takes hours, and a sleeping Mac stalls the transfer. Nothing is
+lost when that happens — the resume logic handles it — but the run sits idle
+until you wake the machine. To avoid it, keep the Mac on mains power and
+prefix the command with `caffeinate`:
+
+```bash
+caffeinate -s python3 gopro_downloader.py --har gopro.com.har --out /Volumes/YourDrive/GoPro --workers 3
+```
+
+`caffeinate -s` keeps the system awake for as long as the download runs and
+exits with it. It only prevents sleep on mains power, so leave the charger
+connected. Closing the lid still sleeps the machine regardless — leave it open.
+
+### If you are downloading to an external drive
+
+Check the format first:
+
+```bash
+diskutil info /Volumes/YourDrive | grep "File System Personality"
+```
+
+**APFS**, **Mac OS Extended** and **ExFAT** are all fine. **MS-DOS (FAT32)**
+is not — it cannot store a file larger than 4 GB, and GoPro source files can
+exceed that. Reformatting erases the drive, so move any existing data off it
+first.
+
 ### Options
 
 | Flag | Meaning |
