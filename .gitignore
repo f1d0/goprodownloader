@@ -1,0 +1,25 @@
+# Credentials: a HAR capture contains your GoPro access token and cookies.
+*.har
+token.txt
+.env
+
+# Downloaded media and resume state
+GoProLibrary/
+GoPro_Library_Recovered/
+*.MP4
+*.mp4
+*.JPG
+*.jpg
+*.zip
+_download_ledger.jsonl
+_library_catalog.json
+_failed.json
+
+# Test output
+tests/out/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
