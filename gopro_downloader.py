@@ -30,6 +30,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from threading import Lock
@@ -292,6 +293,44 @@ def report_token_expiry(claims: dict) -> None:
 # --------------------------------------------------------------------------
 # HTTP
 # --------------------------------------------------------------------------
+
+# Any token-shaped string: GoPro's 5-segment JWE, or a 3-segment JWT.
+ANY_TOKEN_RE = re.compile(r"eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]+){2,4}")
+
+CLIPBOARD_COMMANDS = [
+    ["pbpaste"],                                    # macOS
+    ["wl-paste"],                                   # Linux/Wayland
+    ["xclip", "-selection", "clipboard", "-o"],     # Linux/X11
+    ["xsel", "--clipboard", "--output"],            # Linux/X11
+    ["powershell.exe", "-NoProfile", "-Command", "Get-Clipboard"],  # Windows
+]
+
+
+def read_clipboard() -> str:
+    """Return the clipboard's text, or "" if no reader is available."""
+    for command in CLIPBOARD_COMMANDS:
+        try:
+            result = subprocess.run(
+                command, capture_output=True, timeout=15, check=True
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        return result.stdout.decode("utf-8", "ignore")
+    return ""
+
+
+def extract_token_from_text(text: str) -> str | None:
+    """Pull the most plausible access token out of arbitrary pasted text.
+
+    Accepts the bare token, a cookie value, or a whole "Copy as cURL" command
+    -- anything containing a token-shaped string. The longest match wins, since
+    a truncated or unrelated JWT is always shorter than the real one.
+    """
+    matches = ANY_TOKEN_RE.findall(text or "")
+    if not matches:
+        return None
+    return max(matches, key=len)
+
 
 class ApiError(Exception):
     def __init__(self, status: int, message: str):
@@ -751,6 +790,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--token", default=None,
                         help="Bearer token, if you would rather not use a HAR file. "
                              "Also read from the GOPRO_TOKEN environment variable.")
+    parser.add_argument("--token-from-clipboard", action="store_true",
+                        help="Take the token from your clipboard. Accepts the bare "
+                             "token, a cookie value, or a whole 'Copy as cURL' "
+                             "command - it finds the token inside. Avoids the "
+                             "1024-byte limit on pasting into a terminal.")
     parser.add_argument("--out", default="GoProLibrary",
                         help="Output directory (default: GoProLibrary)")
     parser.add_argument("--quality", choices=["source", "proxy"], default="source",
@@ -776,8 +820,25 @@ def resolve_token(args) -> tuple[str, str, list[str]]:
     user_agent = DEFAULT_UA
     har_ids: list[str] = []
 
+    if getattr(args, "token_from_clipboard", False):
+        clipboard = read_clipboard()
+        if not clipboard.strip():
+            say("[!] The clipboard is empty, or no clipboard reader is available.")
+            say("    On Linux install xclip or wl-clipboard, or use --token.")
+            sys.exit(1)
+        found = extract_token_from_text(clipboard)
+        if not found:
+            say(f"[!] No token found in the clipboard ({len(clipboard)} characters).")
+            say("    Copy either the gp_access_token value, or right-click a")
+            say("    request to api.gopro.com in the Network tab and choose")
+            say("    Copy -> Copy as cURL, then run this again.")
+            sys.exit(1)
+        token = found
+        say(f"[1/4] Took the token from your clipboard ({describe_token(token)}).")
+
     if token:
-        say("[1/4] Using the access token supplied on the command line.")
+        if not getattr(args, "token_from_clipboard", False):
+            say("[1/4] Using the access token supplied on the command line.")
         token = token.strip()
         if token.lower().startswith("bearer "):
             token = token[7:].strip()

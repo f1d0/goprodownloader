@@ -77,25 +77,24 @@ sanitized export — take the token straight from the cookie jar. In DevTools:
 named **`gp_access_token`**. Click it and copy the whole value (it starts
 `eyJhbGci…` and contains four dots). Then:
 
-On macOS, put it on the clipboard from the DevTools **Console** tab (type
-`allow pasting` first if Chrome asks):
-
-```js
-copy(document.cookie.match(/gp_access_token=([^;]+)/)[1])
-```
-
-then load it from the clipboard rather than typing it:
+In DevTools, open the **Network** tab, filter for `api.gopro.com`, reload, then
+**right-click any request → Copy → Copy as cURL**. Then:
 
 ```bash
-export GOPRO_TOKEN="$(pbpaste)"
-python3 gopro_downloader.py --out ./GoProLibrary
+python3 gopro_downloader.py --token-from-clipboard --out ./GoProLibrary
 ```
+
+The tool finds the token inside whatever you copied — the bare value, a cookie
+string, or a whole cURL command — and reports its length so you can confirm it
+arrived intact.
+
+Note that `gp_access_token` is **HttpOnly**, so reading it from
+`document.cookie` in the Console does not work; the Network tab route does.
 
 **Do not paste the token at a terminal prompt, and do not use `read`.** macOS
 caps a line of typed or pasted input at 1024 bytes; the token is longer, so the
 terminal beeps and silently drops the rest. The truncated result is rejected
-with a misleading `invalid_request` that reads like expiry. `pbpaste` avoids
-the limit. On Linux use `xclip -o`; in Windows PowerShell, `Get-Clipboard`.
+with a misleading `invalid_request` that reads like expiry.
 
 Passing `--token "eyJ..."` directly also works where your shell accepts an
 argument that long, but it records the token in your shell history.

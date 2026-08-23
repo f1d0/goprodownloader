@@ -53,6 +53,24 @@ _, ids3, _ = gd.scan_har(big, want_ids=True)
 check("finds a match straddling an 8MB chunk boundary", ids3 == ["ffeeddccbbaa998877665544"], ids3)
 gd.report_token_expiry(claims)
 
+print("\n=== 1b. Clipboard token extraction ===")
+_real = "eyJ" + "a"*900 + "." + "b"*100 + "." + "c"*16 + "." + "d"*200 + "." + "e"*22
+check("bare token", gd.extract_token_from_text(_real) == _real)
+check("finds it in a cookie string among other JWTs",
+      gd.extract_token_from_text("_ga=GA1.1; gp_access_token=" + _real + "; x=eyJhbGc.eyJzdWI.sig") == _real)
+check("finds it in a 'Copy as cURL' authorization header",
+      gd.extract_token_from_text("curl 'https://api.gopro.com/media/search' -H 'authorization: Bearer "
+                                 + _real + "' --compressed") == _real)
+check("finds it in a 'Copy as cURL' cookie header",
+      gd.extract_token_from_text("curl 'https://x' -H 'cookie: a=1; gp_access_token=" + _real + "; b=2'") == _real)
+check("prefers the full token over a truncated one in the same text",
+      gd.extract_token_from_text(_real[:1015] + " ... " + _real) == _real)
+check("returns None when there is no token", gd.extract_token_from_text("hello world") is None)
+check("returns None on empty input", gd.extract_token_from_text("") is None)
+check("shape check accepts the real thing", gd.token_shape_warning(_real) is None)
+check("shape check flags the 1015-char macOS truncation",
+      "TRUNCATED" in (gd.token_shape_warning(_real[:1015]) or ""))
+
 print("\n=== 2. Secret redaction ===")
 gd.register_secret(picked)
 check("token never appears in output", "<redacted>" in gd.redact(f"Bearer {picked} oops") and picked not in gd.redact(picked))

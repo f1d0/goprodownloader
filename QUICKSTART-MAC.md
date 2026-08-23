@@ -56,43 +56,39 @@ Do this immediately before step 5; the token expires in hours.
 2. `Cmd + Option + I` opens DevTools (**not** F12 — that is a brightness key)
 3. Click the **Application** tab (it may be hidden behind the **»** chevron)
 4. Left sidebar → **Storage** → **Cookies** → **https://gopro.com**
-5. Click the **Console** tab. If Chrome asks, type `allow pasting` and press
-   Enter (it blocks console pasting until you do). Then paste this and press
-   Enter:
+5. Click the **Network** tab, type `api.gopro.com` in the **Filter** box, and
+   press `Cmd + R` to reload
+6. **Right-click any row** in the list → **Copy** → **Copy as cURL**
 
-   ```js
-   copy(document.cookie.match(/gp_access_token=([^;]+)/)[1])
-   ```
+That copies the whole request, token included, onto your clipboard.
 
-   That puts the **complete** token on your clipboard. Nothing is displayed —
-   `copy()` is a DevTools helper that copies silently. That is normal.
-
-   *If it errors,* use **Application → Storage → Cookies →
-   `https://gopro.com`**, click the `gp_access_token` row, then select the
-   value in the detail panel at the **bottom** (not the clipped Value column)
-   and press `Cmd + C`.
-
-Then, in Terminal in the `goprodownloader` folder, load it **from the
-clipboard** — do not type or paste it into the terminal:
+Then, in Terminal in the `goprodownloader` folder:
 
 ```bash
-export GOPRO_TOKEN="$(pbpaste)"
+python3 gopro_downloader.py --token-from-clipboard --list-only
 ```
 
-Check it arrived whole:
+The tool reads your clipboard and finds the token inside it, whether you copied
+the bare value, the cookie, or a complete cURL command. It reports the length
+and dot count so you can see it arrived whole (expect ~1,270 characters and 4
+dots).
+
+> **Why not just paste it?** macOS caps a single line of typed or pasted
+> terminal input at **1024 bytes**, and the token is longer. Pasting at a
+> prompt, or using `read`, makes the terminal beep and silently discard the
+> remainder — leaving ~1015 characters that the API rejects with a misleading
+> `invalid_request`. Reading the clipboard directly avoids the limit.
+
+> **Why not read the cookie in the Console?** `gp_access_token` is HttpOnly on
+> GoPro's site, so `document.cookie` cannot see it. The browser still sends it,
+> which is why the Network tab route works.
+
+To keep the token for several commands in one Terminal window:
 
 ```bash
+export GOPRO_TOKEN="$(pbpaste | grep -oE 'eyJ[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+){4}' | head -1)"
 echo "length: ${#GOPRO_TOKEN}  dots: $(printf '%s' "$GOPRO_TOKEN" | tr -cd '.' | wc -c)"
 ```
-
-You want roughly **1,200-1,300 characters and 4 dots**.
-
-> **Never use `read`, and never paste the token at a prompt.** macOS caps a
-> single line of typed or pasted input at **1024 bytes**, and the token is
-> longer. The terminal beeps and silently discards the remainder, leaving a
-> token of about 1015 characters that the API rejects with a misleading
-> `invalid_request` — which looks exactly like an expired token. `pbpaste`
-> reads the clipboard directly and is not subject to that limit.
 
 **This token is a password.** It only lives in that Terminal window, so closing
 the window discards it. Every command below assumes that window.
