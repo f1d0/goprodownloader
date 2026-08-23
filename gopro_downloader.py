@@ -237,6 +237,40 @@ def pick_access_token(tokens: list[str]) -> tuple[str | None, dict]:
     return best_token, best_claims
 
 
+def describe_token(token: str) -> str:
+    """Human-readable sanity check on a token's shape."""
+    dots = token.count(".")
+    return f"{len(token)} characters, {dots} dot(s)"
+
+
+def token_shape_warning(token: str) -> str | None:
+    """Return a warning if the token does not look like a whole GoPro token.
+
+    A truncated copy/paste is by far the most common cause of a rejected
+    token, and it is indistinguishable from expiry unless we check the shape.
+    GoPro issues a 5-segment JWE (4 dots), around 1,200-1,300 characters.
+    """
+    dots = token.count(".")
+    if dots == 4 and len(token) > 800:
+        return None
+    if dots == 2 and len(token) < 300:
+        return (
+            "This looks like a short 3-segment JWT from another site, not "
+            "GoPro's token. Check you copied gp_access_token, not another cookie."
+        )
+    if dots < 4:
+        return (
+            f"This token has {describe_token(token)}, but GoPro's tokens have "
+            "4 dots and are ~1,200-1,300 characters. It looks TRUNCATED. Note "
+            "that macOS terminals cut pasted input off at 1024 bytes, so a "
+            "length near 1015 means the terminal truncated it, not your copy."
+        )
+    return (
+        f"This token has {describe_token(token)}, which does not match the "
+        "expected shape (4 dots, ~1,200-1,300 characters)."
+    )
+
+
 def report_token_expiry(claims: dict) -> None:
     exp = claims.get("exp")
     if not exp:
@@ -769,6 +803,14 @@ def resolve_token(args) -> tuple[str, str, list[str]]:
         say(f"    found an access token ({len(tokens)} JWT(s) in the capture).")
         report_token_expiry(claims)
 
+    warning = token_shape_warning(token)
+    if warning:
+        say("")
+        say("[!] " + warning)
+        say("    Continuing anyway, but expect it to be rejected.")
+    else:
+        say(f"    token looks well-formed ({describe_token(token)}).")
+
     register_secret(token)
     return token, user_agent, har_ids
 
@@ -794,8 +836,26 @@ def main() -> int:
         except ApiError as error:
             if error.status in (401, 403):
                 say(f"[!] The API rejected the token ({error}).")
-                say("    The token has most likely expired. Capture a fresh HAR")
-                say("    file (log in, F12 -> Network, reload, Export HAR) and retry.")
+                warning = token_shape_warning(token)
+                if warning:
+                    say("")
+                    say("    LIKELY CAUSE: " + warning)
+                    say("")
+                    say("    In DevTools on your GoPro media library, open the")
+                    say("    Console tab, type 'allow pasting' + Enter if asked,")
+                    say("    then run:")
+                    say("")
+                    say("      copy(document.cookie.match(/gp_access_token=([^;]+)/)[1])")
+                    say("")
+                    say("    That puts the complete token on your clipboard. Then,")
+                    say("    on macOS, load it WITHOUT typing it (terminals cut")
+                    say("    pasted input at 1024 bytes):")
+                    say("")
+                    say('      export GOPRO_TOKEN="$(pbpaste)"')
+                else:
+                    say(f"    The token is well-formed ({describe_token(token)}),")
+                    say("    so it has most likely expired. GoPro tokens last hours.")
+                    say("    Grab a fresh one and retry.")
                 return 2
             say(f"[!] Library enumeration failed: {error}")
             say("    You can retry with --from-har-ids to use the IDs found in the HAR.")
