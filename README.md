@@ -8,6 +8,8 @@ nothing else. (macOS Monterey and later already ship a suitable `python3`.)
 
 ---
 
+**On a Mac? [QUICKSTART-MAC.md](QUICKSTART-MAC.md) is the short path.**
+
 ## Why this exists
 
 GoPro's web "Download All" quietly caps how much it will actually give you, and
