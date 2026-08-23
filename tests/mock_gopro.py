@@ -5,7 +5,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 MEDIA = []
 for n in range(1, 24):
     MEDIA.append({
-        "id": f"ID{n:011d}"[:13],
+        "id": f"{n:024x}",
         "filename": f"GX01{n:04d}.MP4",
         "file_size": 100000 + n * 1000,
         "captured_at": f"2026-0{(n % 9) + 1}-1{n % 9}T10:00:00Z",
@@ -65,11 +65,21 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "not found"}, 404); return
             n = item.get("_chapters", 1)
             files = [{"item_number": k, "url": f"http://{self.headers['Host']}/blob/{mid}_{k}.MP4",
-                      "width": 1920, "height": 1080} for k in range(1, n + 1)]
+                      "width": 1920, "height": 1080, "available": True,
+                      "video_codec": "h264"} for k in range(1, n + 1)]
+            host = self.headers["Host"]
             self._json({"filename": item["filename"], "_embedded": {
                 "files": files,
-                "variations": [{"label": "high_res_proxy_mp4", "type": "mp4",
-                                "url": f"http://{self.headers['Host']}/blob/{mid}_proxy.MP4"}]}})
+                "variations": [
+                    {"label": "edit_proxy", "type": "mp4", "quality": "720p",
+                     "available": True, "url": f"http://{host}/blob/{mid}_edit.MP4"},
+                    {"label": "audio_proxy", "type": "m4a", "quality": "0p",
+                     "available": True, "url": f"http://{host}/blob/{mid}_audio.M4A"},
+                    {"label": "source", "type": "mp4", "quality": "1520p",
+                     "available": True, "url": f"http://{host}/blob/{mid}_src.MP4"},
+                    {"label": "high_res_proxy_mp4", "type": "mp4", "quality": "1080p",
+                     "available": True, "url": f"http://{host}/blob/{mid}_hi.MP4"},
+                ]}})
             return
 
         m = re.match(r"^/blob/(.+)$", path)
@@ -79,7 +89,7 @@ class Handler(BaseHTTPRequestHandler):
             rng = self.headers.get("Range")
 
             # One file dies mid-stream the first time it is requested.
-            if key == "ID00000000009_1.MP4" and key not in STATE["flaked"]:
+            if key == f"{9:024x}_1.MP4" and key not in STATE["flaked"]:
                 STATE["flaked"].add(key)
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(data)))
@@ -116,6 +126,16 @@ def serve():
     return srv
 
 def make_jwt(sub, exp, issuer="https://gopro.com"):
+    """A signed 3-segment JWT (what third-party scripts on the page use)."""
     def seg(d):
         return base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
     return f"{seg({'alg':'HS256'})}.{seg({'sub':sub,'iss':issuer,'exp':exp})}.sig_{sub}"
+
+
+def make_jwe(sub="gopro-user"):
+    """A 5-segment encrypted JWE -- the real shape of GoPro's access token."""
+    def seg(d):
+        return base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip("=")
+    head = seg({"alg": "RSA-OAEP", "enc": "A128GCM"})
+    body = base64.urlsafe_b64encode(hashlib.sha256(sub.encode()).digest() * 8).decode().rstrip("=")
+    return f"{head}.{body}.{'iv' * 8}.{body}.{'tag' * 5}_{sub}"

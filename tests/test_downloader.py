@@ -17,39 +17,40 @@ OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
 shutil.rmtree(OUT, ignore_errors=True); os.makedirs(OUT)
 
 print("\n=== 1. HAR parsing ===")
-good = mock.make_jwt("gopro-user", int(time.time()) + 7200)
+good = mock.make_jwe("gopro-user")   # 5-segment JWE, as GoPro really issues
 stale = mock.make_jwt("gopro-old", int(time.time()) + 60)
 other = mock.make_jwt("analytics", int(time.time()) + 99999, issuer="https://segment.io")
 har = {"log": {"entries": [
     {"request": {"url": "https://api.gopro.com/media/search",
                  "headers": [{"name": "authorization", "value": f"Bearer {stale}"},
                              {"name": "user-agent", "value": "Mozilla/5.0 (TestBrowser) Chrome/131"}]},
-     "response": {"content": {"text": json.dumps({"_embedded": {"media": [{"id": "ABCdef1234567"}]}})}}},
+     "response": {"content": {"text": json.dumps({"_embedded": {"media": [{"id": "6a873521c46e36abb12cbbf4"}]}})}}},
     {"request": {"url": "https://sdk.segment.io/x", "headers": [{"name": "authorization", "value": f"Bearer {other}"}]},
      "response": {"content": {"text": ""}}},
     {"request": {"url": "https://api.gopro.com/media/search?page=2",
-                 "headers": [{"name": "authorization", "value": f"Bearer {good}"}]},
-     "response": {"content": {"text": json.dumps({"_embedded": {"media": [{"id": "XYZabc9876543"}]}})}}},
+                 "headers": [{"name": "cookie", "value": f"gp_user_id=x; gp_access_token={good}; gp_location=CZ"}]},
+     "response": {"content": {"text": json.dumps({"_embedded": {"media": [{"id": "6a87353ba68ed51ff0547d52"}]}})}}},
 ]}}
 harpath = os.path.join(OUT, "test.har")
 open(harpath, "w").write(json.dumps(har) + " " * 200000)  # pad so it spans chunks
 
 tokens, ids, ua = gd.scan_har(harpath, want_ids=True)
-check("finds all 3 JWTs in HAR", len(tokens) == 3, tokens)
+check("finds all 3 tokens in HAR", len(tokens) == 3, tokens)
 picked, claims = gd.pick_access_token(tokens)
-check("picks the GoPro token, not the 3rd-party one", picked == good, claims)
+check("picks the gp_access_token cookie over other JWTs", picked == good, picked[:20])
+check("the 5-segment JWE is matched in full, not truncated", picked.count(".") == 4, picked.count("."))
 check("ignores segment.io JWT despite later expiry", picked != other)
 check("extracts real user-agent from HAR", ua and "TestBrowser" in ua, ua)
-check("scrapes 13-char media IDs from escaped HAR bodies", set(ids) == {"ABCdef1234567", "XYZabc9876543"}, ids)
+check("scrapes 24-hex media IDs from escaped HAR bodies", set(ids) == {"6a873521c46e36abb12cbbf4", "6a87353ba68ed51ff0547d52"}, ids)
 raw = os.path.join(OUT, "raw.har")
-open(raw, "w").write('{"log":{"entries":[{"response":{"content":{"text":{"_embedded":{"media":[{"id":"PLAINid123456"}]}}}}}]}}')
+open(raw, "w").write('{"log":{"entries":[{"response":{"content":{"text":{"_embedded":{"media":[{"id":"aabbccddeeff001122334455"}]}}}}}]}}')
 _, ids2, _ = gd.scan_har(raw, want_ids=True)
-check("also scrapes unescaped HAR bodies", ids2 == ["PLAINid123456"], ids2)
+check("also scrapes unescaped HAR bodies", ids2 == ["aabbccddeeff001122334455"], ids2)
 big = os.path.join(OUT, "big.har")
 with open(big, "wb") as f:
-    f.write(b"x" * (8*1024*1024 - 10)); f.write(b'\\"id\\":\\"BOUNDARY12345\\"'); f.write(b"y" * 1000)
+    f.write(b"x" * (8*1024*1024 - 10)); f.write(b'\\"id\\":\\"ffeeddccbbaa998877665544\\"'); f.write(b"y" * 1000)
 _, ids3, _ = gd.scan_har(big, want_ids=True)
-check("finds a match straddling an 8MB chunk boundary", ids3 == ["BOUNDARY12345"], ids3)
+check("finds a match straddling an 8MB chunk boundary", ids3 == ["ffeeddccbbaa998877665544"], ids3)
 gd.report_token_expiry(claims)
 
 print("\n=== 2. Secret redaction ===")

@@ -53,7 +53,13 @@ DEFAULT_UA = (
 PROCESSING_STATES = "registered,rendering,pretranscoding,transcoding,failure,ready"
 
 # Preferred download variants, best first. "source" is the untouched original.
-VARIANT_PREFERENCE = ["source", "baked_source", "concat", "high_res_proxy_mp4", "mp4_low"]
+# Observed labels: source, high_res_proxy_mp4, edit_proxy, audio_proxy.
+VARIANT_PREFERENCE = ["source", "baked_source", "concat", "high_res_proxy_mp4",
+                      "edit_proxy", "mp4_low"]
+
+# audio_proxy is an audio-only .m4a. Falling back to it would look like a
+# successful download while losing the video entirely.
+VARIANT_EXCLUDE = {"audio_proxy"}
 
 LEDGER_NAME = "_download_ledger.jsonl"
 CATALOG_NAME = "_library_catalog.json"
@@ -103,13 +109,18 @@ def human_bytes(count: float) -> str:
 # parse would need several times that in RAM.
 # --------------------------------------------------------------------------
 
-JWT_RE = re.compile(
-    rb"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"
-)
+# GoPro issues an encrypted JWE with FIVE dot-separated segments
+# (header.key.iv.ciphertext.tag), not the familiar three-segment signed JWT.
+# Matching only three segments silently truncates the token, so allow 3-5.
+JWT_RE = re.compile(rb"eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]+){2,4}")
+
+# The token also appears in the session cookie under a known name, which is a
+# far more reliable place to find it than "any JWT-shaped string".
+COOKIE_TOKEN_RE = re.compile(rb"gp_access_token=([A-Za-z0-9._-]{40,})")
 # GoPro media IDs inside a HAR body. Response bodies are normally stored as an
 # escaped JSON string ( \"id\":\"..\" ), but some exporters keep them
 # unescaped, so accept either form.
-MEDIA_ID_RE = re.compile(rb'\\?"id\\?"\s*:\s*\\?"([A-Za-z0-9]{13})\\?"')
+MEDIA_ID_RE = re.compile(rb'\\?"id\\?"\s*:\s*\\?"([0-9a-f]{24})\\?"')
 UA_RE = re.compile(rb'"user-agent"\s*,\s*"value"\s*:\s*"([^"]{10,300})"', re.I)
 
 
@@ -128,7 +139,12 @@ def decode_jwt_claims(token: str) -> dict:
 
 
 def scan_har(path: str, want_ids: bool) -> tuple[list[str], list[str], str | None]:
-    """Stream the HAR once, collecting JWTs, (optionally) media IDs and a UA."""
+    """Stream the HAR once, collecting tokens, (optionally) media IDs and a UA.
+
+    Tokens found in the gp_access_token cookie are returned first, because that
+    name identifies them unambiguously as GoPro's.
+    """
+    cookie_tokens: list[str] = []
     tokens: list[str] = []
     seen_tokens: set[str] = set()
     ids: list[str] = []
@@ -148,6 +164,12 @@ def scan_har(path: str, want_ids: bool) -> tuple[list[str], list[str], str | Non
                 break
             read_so_far += len(chunk)
             window = tail + chunk
+
+            for match in COOKIE_TOKEN_RE.finditer(window):
+                token = match.group(1).decode("ascii", "ignore")
+                if token not in seen_tokens:
+                    seen_tokens.add(token)
+                    cookie_tokens.append(token)
 
             for match in JWT_RE.finditer(window):
                 token = match.group(0).decode("ascii", "ignore")
@@ -178,11 +200,20 @@ def scan_har(path: str, want_ids: bool) -> tuple[list[str], list[str], str | Non
         sys.stdout.write("\r" + " " * 40 + "\r")
         sys.stdout.flush()
 
-    return tokens, ids, user_agent
+    return cookie_tokens + tokens, ids, user_agent
 
 
 def pick_access_token(tokens: list[str]) -> tuple[str | None, dict]:
-    """Choose the GoPro access token with the furthest-away expiry."""
+    """Choose the most plausible GoPro access token.
+
+    GoPro's token is encrypted (JWE), so its claims cannot be read and the
+    expiry cannot be compared. scan_har puts cookie-sourced tokens first, so
+    when one of those is present it wins outright.
+    """
+    if tokens and tokens[0].count(".") == 4:
+        # A five-segment token from the gp_access_token cookie: unambiguous.
+        return tokens[0], decode_jwt_claims(tokens[0])
+
     best_token, best_claims, best_exp = None, {}, -1.0
     for token in tokens:
         claims = decode_jwt_claims(token)
@@ -209,7 +240,8 @@ def pick_access_token(tokens: list[str]) -> tuple[str | None, dict]:
 def report_token_expiry(claims: dict) -> None:
     exp = claims.get("exp")
     if not exp:
-        say("    token expiry: unknown (could not read the token's claims)")
+        say("    token expiry: not readable (GoPro's token is encrypted). These")
+        say("    are typically valid for hours, so capture it shortly before use.")
         return
     expires_at = datetime.fromtimestamp(float(exp), tz=timezone.utc)
     remaining = expires_at - datetime.now(timezone.utc)
@@ -367,6 +399,8 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
         # 'files' are the untouched originals. Chaptered videos have several.
         for index, entry in enumerate(files, start=1):
             url = entry.get("url")
+            if entry.get("available") is False:
+                continue
             if url:
                 targets.append(
                     {
@@ -378,7 +412,10 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
         if targets:
             return targets
 
-    variations = embedded.get("variations") or []
+    variations = [
+        v for v in (embedded.get("variations") or [])
+        if v.get("label") not in VARIANT_EXCLUDE and v.get("available") is not False
+    ]
     ordered = sorted(
         variations,
         key=lambda v: VARIANT_PREFERENCE.index(str(v.get("label")))
