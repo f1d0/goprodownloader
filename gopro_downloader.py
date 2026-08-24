@@ -503,8 +503,33 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
         if url:
             return [{"url": url, "part": 1, "suggested_ext": guess_extension(url)}]
 
-    # Nothing usable. Say exactly what the API did return, so the cause is
-    # visible without having to re-query by hand.
+    # Last resort: entries GoPro flags as unavailable but which still carry a
+    # URL. The flag is sometimes stale, and a request that 403s costs us one
+    # round trip, whereas refusing to try loses the file for good.
+    stale: list[dict] = []
+    for index, entry in enumerate(all_files, start=1):
+        if entry.get("url"):
+            stale.append({
+                "url": entry["url"],
+                "part": int(entry.get("item_number") or index),
+                "suggested_ext": guess_extension(entry["url"]),
+            })
+    if not stale:
+        for entry in all_variations:
+            if entry.get("url") and entry.get("label") not in VARIANT_EXCLUDE:
+                stale.append({
+                    "url": entry["url"],
+                    "part": 1,
+                    "suggested_ext": guess_extension(entry["url"]),
+                })
+                break
+    if stale:
+        say(f"    [!] GoPro flags this item as unavailable, but a URL is still "
+            f"present. Trying it anyway ({len(stale)} file(s)).")
+        return stale
+
+    # Genuinely nothing to fetch. Say exactly what the API returned, so the
+    # cause is visible without having to re-query by hand.
     labels = [str(v.get("label")) for v in all_variations] or ["none"]
     unavailable = sum(1 for v in all_files + all_variations
                       if v.get("available") is False)
@@ -515,19 +540,17 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
     )
     if unavailable:
         detail += f", {unavailable} marked unavailable"
-
     excluded = [str(v.get("label")) for v in all_variations
                 if v.get("label") in VARIANT_EXCLUDE]
     if not all_files and not all_variations:
-        detail += (". GoPro is offering nothing for this item -- it is most "
-                   "likely still processing in the cloud. Try again later")
-    elif unavailable and unavailable == len(all_files) + len(all_variations):
-        detail += (". Every asset is flagged unavailable, so GoPro is still "
-                   "preparing them or the original is gone. Try again later")
+        detail += (". GoPro is offering nothing at all for this item -- it is "
+                   "most likely still processing in the cloud. Try again later")
     elif excluded and not [v for v in all_variations
                            if v.get("label") not in VARIANT_EXCLUDE]:
         detail += (f". Only audio-only variation(s) offered ({', '.join(excluded)}); "
                    "there is no video to download")
+    else:
+        detail += ". No entry carries a URL, so there is nothing to request"
     raise ApiError(0, detail)
 
 
