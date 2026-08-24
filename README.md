@@ -221,6 +221,35 @@ If anything fails, the exit code is non-zero and the details land in
 
 ---
 
+## Auditing a finished library
+
+Every file is size-verified against the server's `Content-Length` as it
+downloads. That guarantees the transfer completed — it does not tell you whether
+the *right* asset was served. For that:
+
+```bash
+python3 tools/verify_library.py --out GoProLibrary
+```
+
+It compares the catalogued `file_size` for each item against the bytes actually
+on disk and reports four categories: matching, smaller than catalogued, no size
+in the catalogue, and not downloaded. Local files only — no token, no network.
+
+**On "smaller than catalogued".** A shortfall is worth looking at but is not
+automatically a fault. Known benign causes:
+
+* **Chaptered videos.** GoPro splits long recordings, and the parts may be
+  catalogued under one size while arriving as several files. The audit sums all
+  parts per item, so genuine chaptering should still reconcile.
+* **`file_size` semantics.** GoPro's catalogued size is not documented, and may
+  count something other than the single downloadable original.
+
+The cause that *does* matter is a **proxy served in place of the source** — a
+720p or 1080p transcode instead of the original. A large shortfall (say under
+half) on an item whose type is a plain `Video` is worth investigating; run
+`python3 tools/probe_api.py --token-from-clipboard --media-id <id>` to see which
+variations GoPro offers for it and whether a `source` entry exists.
+
 ## Verifying it worked
 
 ```bash
