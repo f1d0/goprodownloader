@@ -470,6 +470,30 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
     all_files = embedded.get("files") or []
     all_variations = embedded.get("variations") or []
 
+    # The "source" variation is the untouched original the camera recorded.
+    #
+    # _embedded.files looks like the original but is NOT: it is a playback
+    # rendition served from GoPro's VOD CDN, typically around 7% of the
+    # original's size. It must therefore be tried only AFTER the source
+    # variation, not before -- a file downloaded from there verifies
+    # perfectly against Content-Length while being the wrong asset.
+    # Only when the item is a single file. More than one entry in
+    # _embedded.files means several real assets (a 360 camera's two lenses,
+    # distinguished by camera_position), and one "source" variation cannot be
+    # assumed to stand in for all of them -- taking it would silently drop the
+    # others. Those items keep the per-file path, and the catalogued-size check
+    # below flags them if that turns out to be the smaller asset.
+    if quality == "source" and len(all_files) <= 1:
+        for entry in all_variations:
+            if (entry.get("label") == "source"
+                    and entry.get("available") is not False
+                    and entry.get("url")):
+                return [{
+                    "url": entry["url"],
+                    "part": 1,
+                    "suggested_ext": guess_extension(entry["url"]),
+                }]
+
     files = [f for f in all_files if f.get("available") is not False]
     if quality == "source" and files:
         # 'files' are the untouched originals. Chaptered videos have several.
@@ -819,6 +843,17 @@ def process_item(
 
     if errors:
         raise IOError(f"{len(errors)} of {len(targets)} file(s) failed: {errors[0]}")
+
+    # Content-Length verification proves the transfer finished; it cannot tell
+    # us the right asset was served. Compare against the catalogued size too,
+    # so a proxy standing in for an original is caught on the first file
+    # instead of after the whole library has been fetched.
+    catalogued = item.get("file_size")
+    if downloaded and catalogued and total_bytes < catalogued * 0.5:
+        say(f"    [!] WARNING: got {human_bytes(total_bytes)} but the catalogue "
+            f"says {human_bytes(catalogued)} ({total_bytes * 100 / catalogued:.0f}%).")
+        say("        GoPro may have served a lower-quality rendition. Run")
+        say("        tools/verify_library.py when this finishes.")
 
     if skipped and not downloaded:
         say(f"    (already have {label})")

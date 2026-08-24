@@ -71,6 +71,32 @@ check("shape check accepts the real thing", gd.token_shape_warning(_real) is Non
 check("shape check flags the 1015-char macOS truncation",
       "TRUNCATED" in (gd.token_shape_warning(_real[:1015]) or ""))
 
+print("\n=== 1c. Source vs proxy selection (regression) ===")
+class _Stub:
+    def get_json(self, url): return self._r
+_s = _Stub()
+_V = [{"label": "edit_proxy", "url": "https://cdn/edit.MP4", "available": True},
+      {"label": "audio_proxy", "url": "https://cdn/a.M4A", "available": True},
+      {"label": "source", "url": "https://cdn/SOURCE.MP4", "available": True},
+      {"label": "high_res_proxy_mp4", "url": "https://cdn/hi.MP4", "available": True}]
+_s._r = {"_embedded": {"files": [{"url": "https://media-cdn-vod-x.gopro.com/proxy.MP4",
+                                  "available": True, "item_number": 1}], "variations": _V}}
+_t = gd.download_targets(_s, "x", "source")
+check("prefers the source variation over the VOD rendition",
+      _t[0]["url"] == "https://cdn/SOURCE.MP4", _t[0]["url"])
+check("--quality proxy still avoids the source", 
+      gd.download_targets(_s, "x", "proxy")[0]["url"] != "https://cdn/SOURCE.MP4")
+check("never picks the audio-only track",
+      "M4A" not in gd.download_targets(_s, "x", "proxy")[0]["url"])
+_s._r = {"_embedded": {"files": [{"url": f"https://vod/p{i}.MP4", "available": True,
+                                  "item_number": i} for i in (1, 2, 3)], "variations": _V}}
+check("a multi-file item keeps every part rather than collapsing to source",
+      len(gd.download_targets(_s, "x", "source")) == 3)
+_s._r = {"_embedded": {"files": [{"url": "https://cdn/PHOTO.JPG", "available": True,
+                                  "item_number": 1}], "variations": []}}
+check("a photo with no source variation still uses its file",
+      gd.download_targets(_s, "x", "source")[0]["url"] == "https://cdn/PHOTO.JPG")
+
 print("\n=== 2. Secret redaction ===")
 gd.register_secret(picked)
 check("token never appears in output", "<redacted>" in gd.redact(f"Bearer {picked} oops") and picked not in gd.redact(picked))
