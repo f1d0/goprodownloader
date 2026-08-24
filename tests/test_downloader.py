@@ -117,6 +117,26 @@ _s._r = {"_embedded": {"files": [{"url": "ORIG.JPG", "available": True, "item_nu
 check("an available file is not announced as unavailable",
       gd.download_targets(_s, "x", "proxy")[0]["url"] == "ORIG.JPG")
 
+# Several "source" variations are separate assets, not alternatives:
+# >4GB recordings split into parts, and a TimeLapse exposes every frame.
+def _srcs(n): return [{"label": "source", "url": "SRC%d" % i, "available": True}
+                      for i in range(1, n + 1)]
+_s._r = {"_embedded": {"files": [{"url": "VOD", "available": True, "item_number": 1}],
+                       "variations": _srcs(2) + [{"label": "high_res_proxy_mp4",
+                                                  "url": "HI", "available": True}]}}
+check("a 2-part source recording yields both parts",
+      [t["url"] for t in gd.download_targets(_s, "x", "source")] == ["SRC1", "SRC2"])
+_s._r = {"_embedded": {"files": [{"url": "VOD", "available": True, "item_number": 1}],
+                       "variations": _srcs(481) + [{"label": "timelapse_video",
+                                                    "url": "TLV", "available": True}]}}
+check("a timelapse yields every frame, not just the first",
+      len(gd.download_targets(_s, "x", "source")) == 481)
+_s._r = {"_embedded": {"files": [{"url": "F1", "available": True, "item_number": 1},
+                                 {"url": "F2", "available": True, "item_number": 2}],
+                       "variations": _srcs(1)}}
+check("fewer source variations than files keeps the per-file path",
+      [t["url"] for t in gd.download_targets(_s, "x", "source")] == ["F1", "F2"])
+
 print("\n=== 2. Secret redaction ===")
 gd.register_secret(picked)
 check("token never appears in output", "<redacted>" in gd.redact(f"Bearer {picked} oops") and picked not in gd.redact(picked))

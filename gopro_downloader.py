@@ -484,6 +484,18 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
                 return entry
         return None
 
+    def source_variations() -> list[dict]:
+        """EVERY variation labelled "source", in order.
+
+        There can be many, and they are separate assets, not alternatives:
+        a recording longer than ~4 GB is split into several source parts, and
+        a TimeLapse exposes each frame of the sequence as its own source entry
+        (one observed here had 481). Taking only the first silently truncates
+        the item -- to one 4 GB chapter, or to a single frame of a timelapse.
+        """
+        return [e for e in all_variations
+                if e.get("label") == "source" and usable(e)]
+
     def file_targets() -> list[dict]:
         """_embedded.files: for a video this is the VOD playback rendition; for
         a photo it is the actual image. Several entries mean several real
@@ -491,7 +503,8 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
         found = []
         for index, entry in enumerate(all_files, start=1):
             if usable(entry):
-                found.append(as_target(entry["url"], int(entry.get("item_number") or index)))
+                found.append(as_target(entry["url"],
+                                       int(entry.get("item_number") or index)))
         return found
 
     if quality == "source":
@@ -500,12 +513,15 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
         # size, so it must be tried only after source -- it verifies perfectly
         # against Content-Length while being the wrong asset.
         #
-        # Only for single-asset items: with several files, one source variation
-        # cannot be assumed to stand in for all of them.
-        if len(all_files) <= 1:
-            entry = variation("source")
-            if entry:
-                return [as_target(entry["url"])]
+        # Use the source variations when there are at least as many of them as
+        # there are files: they then account for every asset. Fewer means they
+        # cannot be assumed to cover all of them (a 360 camera's two lenses
+        # against a single source entry), so the per-file path is kept.
+        sources = source_variations()
+        if sources and len(sources) >= max(1, len(all_files)):
+            if len(sources) > 1:
+                say(f"    ({len(sources)} source parts)")
+            return [as_target(e["url"], i) for i, e in enumerate(sources, start=1)]
 
         targets = file_targets()
         if targets:
