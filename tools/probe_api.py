@@ -60,10 +60,41 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--har", default="gopro.com.har")
     parser.add_argument("--token", default=None)
+    parser.add_argument("--token-from-clipboard", action="store_true")
+    parser.add_argument("--media-id", default=None,
+                        help="Inspect one specific media item instead of the "
+                             "first one. Use this on IDs listed in _failed.json.")
     args = parser.parse_args()
 
     token, user_agent, _ = gd.resolve_token(args)
     client = gd.Client(token, user_agent)
+
+    if args.media_id:
+        print("\n" + "=" * 60)
+        print(f"INSPECTING ONE ITEM: {args.media_id}")
+        print("=" * 60)
+        try:
+            detail = client.get_json(f"{gd.API_ROOT}/media/{args.media_id}/download")
+        except Exception as error:
+            print(f"  /download FAILED: {gd.redact(str(error))}")
+            return 2
+        emb = detail.get("_embedded") or {}
+        files = emb.get("files") or []
+        variations = emb.get("variations") or []
+        print(f"  _embedded keys        : {list(emb)}")
+        print(f"  source files          : {len(files)}")
+        for f in files:
+            print(f"      item {f.get('item_number')}  available={f.get('available')}  "
+                  f"codec={f.get('video_codec')}  has_url={bool(f.get('url'))}")
+        print(f"  variations            : {len(variations)}")
+        for v in variations:
+            print(f"      {str(v.get('label')):20s} available={v.get('available')}  "
+                  f"quality={v.get('quality')}  type={v.get('type')}  "
+                  f"has_url={bool(v.get('url'))}")
+        print(f"  other _embedded lists : "
+              f"sprites={len(emb.get('sprites') or [])}, "
+              f"sidecar_files={len(emb.get('sidecar_files') or [])}")
+        return 0
 
     print("\n" + "=" * 60)
     print("PROBE 1: /media/search  (does library enumeration work?)")

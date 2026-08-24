@@ -467,13 +467,14 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
     embedded = payload.get("_embedded") or {}
     targets: list[dict] = []
 
-    files = embedded.get("files") or []
+    all_files = embedded.get("files") or []
+    all_variations = embedded.get("variations") or []
+
+    files = [f for f in all_files if f.get("available") is not False]
     if quality == "source" and files:
         # 'files' are the untouched originals. Chaptered videos have several.
         for index, entry in enumerate(files, start=1):
             url = entry.get("url")
-            if entry.get("available") is False:
-                continue
             if url:
                 targets.append(
                     {
@@ -486,7 +487,7 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
             return targets
 
     variations = [
-        v for v in (embedded.get("variations") or [])
+        v for v in all_variations
         if v.get("label") not in VARIANT_EXCLUDE and v.get("available") is not False
     ]
     ordered = sorted(
@@ -502,7 +503,32 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
         if url:
             return [{"url": url, "part": 1, "suggested_ext": guess_extension(url)}]
 
-    raise ApiError(0, f"no downloadable URL in the API response for {media_id}")
+    # Nothing usable. Say exactly what the API did return, so the cause is
+    # visible without having to re-query by hand.
+    labels = [str(v.get("label")) for v in all_variations] or ["none"]
+    unavailable = sum(1 for v in all_files + all_variations
+                      if v.get("available") is False)
+    detail = (
+        f"no downloadable URL for {media_id}: "
+        f"{len(all_files)} source file(s), "
+        f"{len(all_variations)} variation(s) [{', '.join(labels)}]"
+    )
+    if unavailable:
+        detail += f", {unavailable} marked unavailable"
+
+    excluded = [str(v.get("label")) for v in all_variations
+                if v.get("label") in VARIANT_EXCLUDE]
+    if not all_files and not all_variations:
+        detail += (". GoPro is offering nothing for this item -- it is most "
+                   "likely still processing in the cloud. Try again later")
+    elif unavailable and unavailable == len(all_files) + len(all_variations):
+        detail += (". Every asset is flagged unavailable, so GoPro is still "
+                   "preparing them or the original is gone. Try again later")
+    elif excluded and not [v for v in all_variations
+                           if v.get("label") not in VARIANT_EXCLUDE]:
+        detail += (f". Only audio-only variation(s) offered ({', '.join(excluded)}); "
+                   "there is no video to download")
+    raise ApiError(0, detail)
 
 
 def guess_extension(url: str) -> str:
