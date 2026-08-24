@@ -62,6 +62,10 @@ VARIANT_PREFERENCE = ["source", "baked_source", "concat", "high_res_proxy_mp4",
 # successful download while losing the video entirely.
 VARIANT_EXCLUDE = {"audio_proxy"}
 
+# For --quality proxy, best-first. "source" is deliberately absent: it is the
+# full-size original, which is the opposite of what proxy was asked for.
+PROXY_PREFERENCE = ["high_res_proxy_mp4", "edit_proxy", "mp4_low"]
+
 LEDGER_NAME = "_download_ledger.jsonl"
 CATALOG_NAME = "_library_catalog.json"
 
@@ -465,87 +469,83 @@ def download_targets(client: Client, media_id: str, quality: str) -> list[dict]:
     """Return [{'url':..., 'part':int, 'suggested_ext':str}] for one media item."""
     payload = client.get_json(f"{API_ROOT}/media/{media_id}/download")
     embedded = payload.get("_embedded") or {}
-    targets: list[dict] = []
-
     all_files = embedded.get("files") or []
     all_variations = embedded.get("variations") or []
 
-    # The "source" variation is the untouched original the camera recorded.
-    #
-    # _embedded.files looks like the original but is NOT: it is a playback
-    # rendition served from GoPro's VOD CDN, typically around 7% of the
-    # original's size. It must therefore be tried only AFTER the source
-    # variation, not before -- a file downloaded from there verifies
-    # perfectly against Content-Length while being the wrong asset.
-    # Only when the item is a single file. More than one entry in
-    # _embedded.files means several real assets (a 360 camera's two lenses,
-    # distinguished by camera_position), and one "source" variation cannot be
-    # assumed to stand in for all of them -- taking it would silently drop the
-    # others. Those items keep the per-file path, and the catalogued-size check
-    # below flags them if that turns out to be the smaller asset.
-    if quality == "source" and len(all_files) <= 1:
-        for entry in all_variations:
-            if (entry.get("label") == "source"
-                    and entry.get("available") is not False
-                    and entry.get("url")):
-                return [{
-                    "url": entry["url"],
-                    "part": 1,
-                    "suggested_ext": guess_extension(entry["url"]),
-                }]
+    def as_target(url: str, part: int = 1) -> dict:
+        return {"url": url, "part": part, "suggested_ext": guess_extension(url)}
 
-    files = [f for f in all_files if f.get("available") is not False]
-    if quality == "source" and files:
-        # 'files' are the untouched originals. Chaptered videos have several.
-        for index, entry in enumerate(files, start=1):
-            url = entry.get("url")
-            if url:
-                targets.append(
-                    {
-                        "url": url,
-                        "part": int(entry.get("item_number") or index),
-                        "suggested_ext": guess_extension(url),
-                    }
-                )
+    def usable(entry: dict) -> bool:
+        return bool(entry.get("url")) and entry.get("available") is not False
+
+    def variation(label: str) -> dict | None:
+        for entry in all_variations:
+            if entry.get("label") == label and usable(entry):
+                return entry
+        return None
+
+    def file_targets() -> list[dict]:
+        """_embedded.files: for a video this is the VOD playback rendition; for
+        a photo it is the actual image. Several entries mean several real
+        assets (a 360 camera's two lenses, keyed by camera_position)."""
+        found = []
+        for index, entry in enumerate(all_files, start=1):
+            if usable(entry):
+                found.append(as_target(entry["url"], int(entry.get("item_number") or index)))
+        return found
+
+    if quality == "source":
+        # The "source" variation is the untouched original. _embedded.files
+        # looks like the original but is a VOD rendition at roughly 7% of the
+        # size, so it must be tried only after source -- it verifies perfectly
+        # against Content-Length while being the wrong asset.
+        #
+        # Only for single-asset items: with several files, one source variation
+        # cannot be assumed to stand in for all of them.
+        if len(all_files) <= 1:
+            entry = variation("source")
+            if entry:
+                return [as_target(entry["url"])]
+
+        targets = file_targets()
         if targets:
             return targets
 
-    variations = [
-        v for v in all_variations
-        if v.get("label") not in VARIANT_EXCLUDE and v.get("available") is not False
-    ]
-    ordered = sorted(
-        variations,
-        key=lambda v: VARIANT_PREFERENCE.index(str(v.get("label")))
-        if str(v.get("label")) in VARIANT_PREFERENCE
-        else len(VARIANT_PREFERENCE),
-    )
-    if quality == "proxy":
-        ordered = [v for v in ordered if v.get("label") != "source"] or ordered
-    for entry in ordered:
-        url = entry.get("url")
-        if url:
-            return [{"url": url, "part": 1, "suggested_ext": guess_extension(url)}]
+        for label in VARIANT_PREFERENCE:
+            entry = variation(label)
+            if entry:
+                return [as_target(entry["url"])]
+    else:
+        # Proxy: smaller renditions only. Never the source -- returning the
+        # full-size original for an explicit --quality proxy is the opposite
+        # of what was asked for.
+        for label in PROXY_PREFERENCE:
+            entry = variation(label)
+            if entry:
+                return [as_target(entry["url"])]
+
+        targets = file_targets()
+        if targets:
+            return targets
+
+        entry = variation("source")
+        if entry:
+            say("    [!] No proxy rendition exists for this item; falling back "
+                "to the full-size source.")
+            return [as_target(entry["url"])]
 
     # Last resort: entries GoPro flags as unavailable but which still carry a
-    # URL. The flag is sometimes stale, and a request that 403s costs us one
-    # round trip, whereas refusing to try loses the file for good.
-    stale: list[dict] = []
-    for index, entry in enumerate(all_files, start=1):
-        if entry.get("url"):
-            stale.append({
-                "url": entry["url"],
-                "part": int(entry.get("item_number") or index),
-                "suggested_ext": guess_extension(entry["url"]),
-            })
+    # URL. The flag is sometimes stale, and a request that 403s costs one round
+    # trip, whereas refusing to try loses the file for good.
+    stale = [
+        as_target(entry["url"], int(entry.get("item_number") or index))
+        for index, entry in enumerate(all_files, start=1)
+        if entry.get("url")
+    ]
     if not stale:
         for entry in all_variations:
             if entry.get("url") and entry.get("label") not in VARIANT_EXCLUDE:
-                stale.append({
-                    "url": entry["url"],
-                    "part": 1,
-                    "suggested_ext": guess_extension(entry["url"]),
-                })
+                stale = [as_target(entry["url"])]
                 break
     if stale:
         say(f"    [!] GoPro flags this item as unavailable, but a URL is still "

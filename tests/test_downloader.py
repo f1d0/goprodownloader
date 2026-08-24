@@ -1,6 +1,7 @@
 import json, os, shutil, sys, time, importlib
-sys.path.insert(0, "/home/user/goprodownloader")
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(_HERE))   # the repo root, wherever it is
+sys.path.insert(0, _HERE)
 import mock_gopro as mock
 import gopro_downloader as gd
 
@@ -13,7 +14,7 @@ srv = mock.serve()
 base = f"http://127.0.0.1:{srv.server_port}"
 gd.API_ROOT = base
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out")
+OUT = os.path.join(_HERE, "out")
 shutil.rmtree(OUT, ignore_errors=True); os.makedirs(OUT)
 
 print("\n=== 1. HAR parsing ===")
@@ -96,6 +97,25 @@ _s._r = {"_embedded": {"files": [{"url": "https://cdn/PHOTO.JPG", "available": T
                                   "item_number": 1}], "variations": []}}
 check("a photo with no source variation still uses its file",
       gd.download_targets(_s, "x", "source")[0]["url"] == "https://cdn/PHOTO.JPG")
+
+# --quality proxy must never hand back the full-size source silently.
+_s._r = {"_embedded": {"files": [], "variations": [
+    {"label": "source", "url": "S", "available": True},
+    {"label": "high_res_proxy_mp4", "url": "HI", "available": True}]}}
+check("proxy prefers a proxy rendition over the source",
+      gd.download_targets(_s, "x", "proxy")[0]["url"] == "HI")
+_s._r = {"_embedded": {"files": [{"url": "VOD", "available": True, "item_number": 1}],
+                       "variations": [{"label": "source", "url": "S", "available": True}]}}
+check("proxy prefers the VOD rendition over the source",
+      gd.download_targets(_s, "x", "proxy")[0]["url"] == "VOD")
+_s._r = {"_embedded": {"files": [], "variations": [
+    {"label": "source", "url": "S", "available": True}]}}
+check("proxy falls back to source only when nothing else exists",
+      gd.download_targets(_s, "x", "proxy")[0]["url"] == "S")
+_s._r = {"_embedded": {"files": [{"url": "ORIG.JPG", "available": True, "item_number": 1}],
+                       "variations": []}}
+check("an available file is not announced as unavailable",
+      gd.download_targets(_s, "x", "proxy")[0]["url"] == "ORIG.JPG")
 
 print("\n=== 2. Secret redaction ===")
 gd.register_secret(picked)
