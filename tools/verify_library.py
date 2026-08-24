@@ -17,8 +17,23 @@ Reads only local files. No token, no network.
 import argparse
 import json
 import os
+import re
 import sys
 from collections import defaultdict
+
+# GoPro splits a long recording into chapters at roughly 4 GB, and registers
+# each chapter as its own library item: GX019086.MP4, GX029086.mp4, ...
+# The digits after the two-letter prefix are the chapter number; the last four
+# identify the recording. The chapter-01 item's catalogued file_size covers the
+# WHOLE recording, so comparing it against just that chapter's bytes reports a
+# shortfall that does not exist.
+CHAPTER_RE = re.compile(r"^(G[A-Z])(\d{2})(\d{4})\.(?:MP4|mp4)$")
+
+
+def recording_key(filename):
+    """Return (prefix, number) for a chaptered file, else None."""
+    match = CHAPTER_RE.match(filename or "")
+    return (match.group(1), match.group(3)) if match else None
 
 
 def human(count):
@@ -68,15 +83,51 @@ def main():
             on_disk[media_id] += actual
             parts[media_id].append((os.path.basename(path), actual))
 
+    # Group chaptered recordings so a multi-chapter video is judged as a whole.
+    groups = defaultdict(list)
+    for item in catalog:
+        key = recording_key(item.get("filename"))
+        if key:
+            groups[key].append(item)
+
+    chaptered = {}       # media_id -> group key, for items in a real group
+    for key, members in groups.items():
+        if len(members) > 1:
+            for item in members:
+                chaptered[item["id"]] = key
+
     short, unverifiable, absent, ok = [], [], [], 0
-    catalogued_total = 0
-    disk_total = 0
+    by_chapters = []
+    disk_total = sum(on_disk.values())
+    seen_groups = set()
 
     for item in catalog:
         media_id = item.get("id")
         expected = item.get("file_size")
         actual = on_disk.get(media_id, 0)
-        disk_total += actual
+
+        key = chaptered.get(media_id)
+        if key:
+            # Judge the whole recording once, on its first chapter.
+            if key in seen_groups:
+                continue
+            seen_groups.add(key)
+            members = groups[key]
+            first = min(members, key=lambda i: i["filename"])
+            total_expected = first.get("file_size") or 0
+            total_actual = sum(on_disk.get(m["id"], 0) for m in members)
+            gone = [m for m in members if m["id"] not in on_disk]
+            if gone:
+                absent.extend(gone)
+            if not total_expected:
+                unverifiable.append((first, total_actual))
+            elif total_actual < total_expected * args.tolerance:
+                short.append((first, total_expected, total_actual))
+            else:
+                ok += 1
+                if len(members) > 1 and total_actual > (first.get("file_size") or 0) * 0.99:
+                    by_chapters.append((first, members, total_actual))
+            continue
 
         if media_id not in on_disk:
             absent.append(item)
@@ -84,7 +135,6 @@ def main():
         if not expected:
             unverifiable.append((item, actual))
             continue
-        catalogued_total += expected
         if actual < expected * args.tolerance:
             short.append((item, expected, actual))
         else:
@@ -96,6 +146,9 @@ def main():
     print(f"  Bytes on disk  : {human(disk_total)}")
     print("=" * 66)
     print(f"  size matches catalogue    : {ok}")
+    if by_chapters:
+        print(f"     (of which {len(by_chapters)} are multi-chapter recordings,")
+        print(f"      complete once their chapters are summed)")
     print(f"  SMALLER than catalogue    : {len(short)}")
     print(f"  no size in catalogue      : {len(unverifiable)}")
     print(f"  not downloaded at all     : {len(absent)}")
@@ -109,9 +162,16 @@ def main():
             short, key=lambda s: s[2] / s[1]
         )[:40]:
             pct = actual * 100 / expected
+            key = recording_key(item.get("filename"))
+            members = groups.get(key, [item]) if key else [item]
             print(f"  {item.get('filename')}  ({item.get('type')})")
             print(f"      catalogue {human(expected):>9}   on disk {human(actual):>9}"
-                  f"   = {pct:.0f}%   [{len(parts[item['id']])} file(s)]")
+                  f"   = {pct:.0f}%")
+            if len(members) > 1:
+                for member in sorted(members, key=lambda i: i["filename"]):
+                    got = on_disk.get(member["id"], 0)
+                    mark = "" if got else "   <-- NOT DOWNLOADED"
+                    print(f"        {member['filename']:<18} {human(got):>10}{mark}")
         if len(short) > 40:
             print(f"  ... and {len(short) - 40} more")
 
