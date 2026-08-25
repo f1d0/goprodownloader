@@ -221,6 +221,25 @@ If anything fails, the exit code is non-zero and the details land in
 
 ---
 
+## When the API will not serve an item but the website will
+
+`/media/{id}/download` can return a URL that answers 403, for an item GoPro's
+own web interface still downloads happily. The website evidently obtains its
+media by some other route. If you hit this, fetch the file in the browser and
+adopt it into the library:
+
+```bash
+python3 tools/adopt.py --out GoProLibrary --file ~/Downloads/GH016224.MP4
+```
+
+It matches the file against the catalogue (by name, or `--id` when ambiguous),
+checks it really is a video or image, names it the way the downloader would,
+and records it in the ledger so the audit counts it. Dry run unless you pass
+`--yes`; `--copy` keeps your original.
+
+So treat a 403 as "not available through this API", not as "gone". Try the
+website before concluding an item is unrecoverable.
+
 ## Auditing a finished library
 
 Every file is size-verified against the server's `Content-Length` as it
