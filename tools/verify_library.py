@@ -90,13 +90,35 @@ def main():
         if key:
             groups[key].append(item)
 
+    def chapter_number(item):
+        match = CHAPTER_RE.match(item.get("filename") or "")
+        return match.group(2) if match else None
+
     chaptered = {}       # media_id -> group key, for items in a real group
     for key, members in groups.items():
-        if len(members) > 1:
+        # A real multi-chapter recording has DISTINCT chapter numbers
+        # (GX01xxxx, GX02xxxx). Two entries both numbered 01 are duplicate
+        # registrations of one file, not two chapters of one recording.
+        if len({chapter_number(m) for m in members} - {None}) > 1:
             for item in members:
                 chaptered[item["id"]] = key
 
+    # GoPro sometimes registers one recording twice, and the second
+    # registration's upload never completes: no file_size, nothing downloadable.
+    # It is not missing footage -- the same filename and capture time is present
+    # and complete under the other ID -- so name it rather than calling it a gap.
+    complete_signatures = set()
+    for item in catalog:
+        if on_disk.get(item.get("id")):
+            complete_signatures.add((item.get("filename"), item.get("captured_at")))
+
+    def is_duplicate_registration(item):
+        return (not item.get("file_size")
+                and item.get("id") not in on_disk
+                and (item.get("filename"), item.get("captured_at")) in complete_signatures)
+
     short, unverifiable, absent, ok = [], [], [], 0
+    duplicates = []
     by_chapters = []
     disk_total = sum(on_disk.values())
     seen_groups = set()
@@ -117,8 +139,8 @@ def main():
             total_expected = first.get("file_size") or 0
             total_actual = sum(on_disk.get(m["id"], 0) for m in members)
             gone = [m for m in members if m["id"] not in on_disk]
-            if gone:
-                absent.extend(gone)
+            for member in gone:
+                (duplicates if is_duplicate_registration(member) else absent).append(member)
             if not total_expected:
                 unverifiable.append((first, total_actual))
             elif total_actual < total_expected * args.tolerance:
@@ -130,7 +152,7 @@ def main():
             continue
 
         if media_id not in on_disk:
-            absent.append(item)
+            (duplicates if is_duplicate_registration(item) else absent).append(item)
             continue
         if not expected:
             unverifiable.append((item, actual))
@@ -152,6 +174,9 @@ def main():
     print(f"  SMALLER than catalogue    : {len(short)}")
     print(f"  no size in catalogue      : {len(unverifiable)}")
     print(f"  not downloaded at all     : {len(absent)}")
+    if duplicates:
+        print(f"  duplicate registrations   : {len(duplicates)}"
+              f"  (same file already held)")
     print(f"  in ledger but gone now    : {len(missing_files)}")
 
     if short:
@@ -188,6 +213,15 @@ def main():
         print("-" * 66)
         for media_id, path in missing_files[:20]:
             print(f"  {os.path.basename(path)}")
+
+    if duplicates:
+        print("\n" + "-" * 66)
+        print("DUPLICATE REGISTRATIONS -- no footage missing")
+        print("-" * 66)
+        for item in duplicates:
+            print(f"  {item.get('filename')}  ({item.get('type')})  id={item.get('id')}")
+        print("  GoPro registered these twice and one upload never completed.")
+        print("  The same recording is present and complete under another ID.")
 
     print()
     if not short and not absent and not missing_files:
